@@ -10,6 +10,7 @@ using MelonLoader;
 using MelonLoader.Utils;
 using System.Linq.Expressions;
 using System.Reflection;
+using UnityEngine.InputSystem;
 using UnityEngine.Subsystems;
 using UnityEngine.UI;
 using UnityEngine.XR;
@@ -39,7 +40,7 @@ namespace RecipeBugFixes
 
         private static void Prefix(ref Il2CppSystem.Collections.Generic.List<Il2CppArrabbiata.Common.Database.Recipe> recipes, Il2CppSystem.Collections.Generic.List<Il2CppArrabbiata.Common.Database.PhaseTemplate> phaseTemplates, Il2CppSystem.Collections.Generic.List<Il2CppArrabbiata.Common.NewDatabase.PreparationTableTemplate> preparationTableTemplates)
         {
-            List<(string, int)> recipePotionstoIncrease = [("PureeVegan_Cooked_RA", 4)];
+            List<(string, int)> recipePotionstoIncrease = [("PureeVegan_Cooked_RA", 4), ("VealStock_Cooked_RA", 4), ("PrepLambChop_RA", 4)];
             List<string> ingredientsThicknessRemoved = ["LonzuWithOnionAndGarlic_RA"];
 
             for (int i = 0; i < recipes.Count; i++)
@@ -48,7 +49,7 @@ namespace RecipeBugFixes
                 
                 if(recipePotionstoIncrease.Any(t => t.Item1 == recipe.recipeAsync.ToString())) IncreasePotions(recipe, 4); // increase Potions of all recipes listed
                 if(recipe.recipeAsync.ToString() == "LonzuWithOnionAndGarlic_RA") SetPropertyToEmptyString(recipe.ingredients[1], "_thickness_k__BackingField"); // that's the chopped Lonzu
-                if (recipe.recipeAsync.ToString() == "PeasMintSoup_RA") recipe._allowRecipeActions_k__BackingField = false;             
+                //if (recipe.recipeAsync.ToString() == "PeasMintSoup_RA") recipe._allowRecipeActions_k__BackingField = false;             
             }
 
         }
@@ -56,11 +57,12 @@ namespace RecipeBugFixes
         private static void IncreasePotions(Il2CppArrabbiata.Common.Database.Recipe recipe, int targetAmount)
         {
 
-            var baseCraft = recipe.crafts[0];
+            var baseCraft = recipe.crafts[^1];
 
-            if (targetAmount < 1) throw new Exception("Target amount is less than 1");
+            if (targetAmount < recipe.crafts.Count) throw new Exception("Target amount is less than currentAmount, reducing Potions not Implemented yet");
 
-            for (int i = 1; i < targetAmount; i++)
+
+            for (int i = 0; i < (targetAmount - recipe.crafts.Count); i++)
             {
                 var clone = new Il2CppArrabbiata.Common.Database.RecipeCraft();
 
@@ -104,6 +106,9 @@ namespace RecipeBugFixes
                 if (item.fullName == "DB_ITEM_SMALL-POTATO_COOKED") SetPropertyItem(item, "_useTemperature_k__BackingField", false);
                 if (item.id == 122) SetPropertyItem(item, "_useTemperature_k__BackingField", true); //tagliatelle
                 if (item.id == 718) item.refAssetItemTags.Remove(item.refAssetItemTags[1]); // remove vegetarian tag from Arancini
+                if (item.id == 197) SetPropertyItem(item, "_useTemperature_k__BackingField", true); // add temp to veal stock
+                if (item.id == 1416) SetPropertyItem(item, "_maxStacks_k__BackingField", 5); // onion halves stackable
+                    
             }
 
         }
@@ -202,12 +207,13 @@ namespace RecipeBugFixes
 
     }
 
-    [HarmonyPatch(typeof(Il2CppArrabbiata.Container), "UpdateUseTemperature")]
+    // [HarmonyPatch(typeof(Il2CppArrabbiata.Container), "UpdateUseTemperature")] // deprecated patch
     public static class PatchContainerTemp {
 
         
         private static void Prefix(ref Il2CppArrabbiata.Container __instance) {
-            if (__instance.recipe?.id.id == 852 ){ // Marinating Pea Soup
+            List<int> stopTempPropagation = [852, 1063]; // [Marinating Pea Soup, terragon-potato puree mix]
+            if (stopTempPropagation.Contains(__instance.recipe?.id.id ?? -1)){ 
                 foreach (var slot in __instance.inventoryRenderer?.m_slots)
                 {
                     slot.item?.temperature.m_internalTemperature.m_useTemperature = false;
@@ -217,8 +223,6 @@ namespace RecipeBugFixes
                 //return;
             }
 
-
-
             /*Traverse.IterateProperties(__instance, t =>
             {
                 Melon<Core>.Logger.Msg(
@@ -227,6 +231,73 @@ namespace RecipeBugFixes
             });*/
         }
     }
+
+    // [HarmonyPatch(typeof(Il2CppArrabbiata.Workstation), "OnRecipeEvent")]
+    public static class PatchBlenderTemp
+    {
+        static readonly HashSet<int> stopTempPropagation = [1080, 1316];  // [Marinating Pea Soup mixed, terragon-potato puree mix]
+        private static void Postfix(ref Il2CppArrabbiata.Workstation __instance, ERecipeEvent recipeEvent)
+        {
+            if (__instance.fullname == "UI_BLENDER" && recipeEvent == ERecipeEvent.Cooked)
+            {
+                var lastItem = __instance?.inventoryRenderer?.m_inventories[1].m_backend.m_lastAdded;
+                if (stopTempPropagation.Contains(lastItem?.itemId.id ?? -1))
+                {
+                    lastItem.m_temperature.m_useTemperature = false;
+                    Melon<Core>.Logger.Msg($"Hi, disabled temperature for item {lastItem.itemData.fullName}");
+                }
+            }
+        }
+    }
+    /*
+    [HarmonyPatch(typeof(Il2CppArrabbiata.Item), "get_temperature")]
+    public static class PatchItemTemp
+    {
+        static readonly HashSet<int> stopTempPropagation = [1080, 1316];  // [Marinating Pea Soup mixed, terragon-potato puree mix]
+        static Il2CppArrabbiata.ReadOnlyTemperature Postfix(Il2CppArrabbiata.ReadOnlyTemperature __result, Il2CppArrabbiata.Item __instance)
+        {
+            if (!stopTempPropagation.Contains(__instance.id.id))
+                return __result;
+
+            var modified = __result; // copy struct
+
+            modified.m_internalTemperature.m_useTemperature = false;
+
+            return modified;
+            Melon<Core>.Logger.Msg($"Hi, disabled temperature for item {__instance.name}");
+        }
+    }
+    */
+    
+    [HarmonyPatch(typeof(Il2CppArrabbiata.Temperature.Backend), "InheritTemperatures")]
+    public static class PatchTemperatureInheritance
+    {
+        static readonly HashSet<int> stopTempPropagation = 
+            [1080, // pea mint soup mixed
+            1053,  // pea watercress
+            457,   // parmesan tuiles
+            1316]; // tarragon puree balls
+
+        static void Postfix(
+            Il2CppArrabbiata.Temperature.Backend __instance,
+            ref List<Il2CppArrabbiata.ReadOnlyTemperature> inheritedTemperatures)
+        {
+            int id = __instance?.m_item?.itemId?.id ?? -1;
+
+            if (id == -1)
+                return;
+
+            if (stopTempPropagation.Contains(id))
+            {
+                __instance.m_useTemperature = false;
+
+                Melon<Core>.Logger.Msg(
+                    $"Disabled temp inheritance for {__instance.m_item.itemData.fullName}"
+                );
+            }
+        }
+    }
+
     public static class DebugDump
     {
         public static void DumpObject(object obj, string outputFilename)
