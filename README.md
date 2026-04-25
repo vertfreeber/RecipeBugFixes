@@ -1,0 +1,1 @@
+Various Bugfixes to Recipes in the game. Requires Melonloader to Work. Fixes Bugs like certain dishes having to be kept warm and other non logical requirements, recipes not producing enough portions of the dish etc. Check changelog for current fixes. Currently in Early Access, more recipe fixes will be uploaded soon.
